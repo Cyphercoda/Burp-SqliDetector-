@@ -1,91 +1,79 @@
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import re
+from burp import IBurpExtender
+from burp import IHttpListener
+from burp import IScannerCheck
+from burp import IScanIssue
 
-import burp.*;
+class BurpExtender(IBurpExtender, IHttpListener, IScannerCheck):
+    def registerExtenderCallbacks(self, callbacks):
+        self._callbacks = callbacks
+        self._helpers = callbacks.getHelpers()
+        callbacks.setExtensionName("SQLi Scanner")
+        callbacks.registerHttpListener(self)
+        callbacks.registerScannerCheck(self)
 
-public class SQLiScanner implements IHttpListener {
-    private IBurpExtenderCallbacks callbacks;
-    private IExtensionHelpers helpers;
+    def processHttpMessage(self, toolFlag, messageIsRequest, messageInfo):
+        if toolFlag == self._callbacks.TOOL_PROXY and not messageIsRequest:
+            request = messageInfo.getRequest()
+            requestInfo = self._helpers.analyzeRequest(request)
 
-    private static final Pattern sqlInjectionRegex = Pattern.compile("(?i)((\\b(union(\\b.*?\\b)select|(?<!\\\\)')\\b)|((?<!\\\\)\"))");
+            params = requestInfo.getParameters()
 
-    public void registerExtenderCallbacks(IBurpExtenderCallbacks callbacks) {
-        this.callbacks = callbacks;
-        helpers = callbacks.getHelpers();
-        callbacks.setExtensionName("SQLi Scanner");
-        callbacks.registerHttpListener(this);
-    }
+            for param in params:
+                if re.search(r"((?i)\b(union(?:\b.*?\b)select|(?<!\\)'\b)|((?<!\\)\"))", param.getValue()):
+                    issue = SQLInjectionIssue(messageInfo.getHttpService(), requestInfo.getUrl(), [self._callbacks.applyMarkers(messageInfo, None, 0, 0)], "SQL Injection", "A potential SQL injection vulnerability was detected in the following parameter: " + param.getName(), "High")
+                    self._callbacks.addScanIssue(issue)
 
-    public void processHttpMessage(int toolFlag, boolean messageIsRequest, IHttpRequestResponse messageInfo) {
-        if (toolFlag == IBurpExtenderCallbacks.TOOL_PROXY && messageIsRequest) {
-            byte[] request = messageInfo.getRequest();
-            IRequestInfo requestInfo = helpers.analyzeRequest(request);
+    def doPassiveScan(self, baseRequestResponse):
+        pass
 
-            String[] params = requestInfo.getParameters();
+    def doActiveScan(self, baseRequestResponse, insertionPoint):
+        pass
 
-            for (String param : params) {
-                Matcher matcher = sqlInjectionRegex.matcher(param);
-                if (matcher.find()) {
-                    callbacks.addScanIssue(new CustomScanIssue(messageInfo, requestInfo.getUrl(),
-                            new IHttpRequestResponse[] { callbacks.applyMarkers(messageInfo, null, matcher.start(), matcher.end()) },
-                            "SQL Injection", "A potential SQL injection vulnerability was detected in the following parameter: " + param,
-                            "High"));
-                }
-            }
-        }
-    }
+    def consolidateDuplicateIssues(self, existingIssue, newIssue):
+        if existingIssue.getIssueName() == newIssue.getIssueName() and existingIssue.getUrl() == newIssue.getUrl():
+            return -1
+        else:
+            return 0
 
-    private class CustomScanIssue implements IScanIssue {
-        private IHttpRequestResponse[] httpMessages;
-        private URL url;
-        private IHttpService httpService;
-        private String name;
-        private String detail;
-        private String severity;
+class SQLInjectionIssue(IScanIssue):
+    def __init__(self, httpService, url, httpMessages, name, detail, severity):
+        self._httpService = httpService
+        self._url = url
+        self._httpMessages = httpMessages
+        self._name = name
+        self._detail = detail
+        self._severity = severity
 
-        public CustomScanIssue(IHttpRequestResponse httpMessage, URL url, IHttpRequestResponse[] httpMessages, String name, String detail, String severity) {
-            this.httpService = httpMessage.getHttpService();
-            this.url = url;
-            this.httpMessages = httpMessages;
-            this.name = name;
-            this.detail = detail;
-            this.severity = severity;
-        }
+    def getUrl(self):
+        return self._url
 
-        public URL getUrl() {
-            return url;
-        }
+    def getIssueName(self):
+        return self._name
 
-        public String getIssueName() {
-            return name;
-        }
+    def getIssueType(self):
+        return 0
 
-        public int getIssueType() {
-            return 0;
-        }
+    def getSeverity(self):
+        return self._severity
 
-        public String getSeverity() {
-            return severity;
-        }
+    def getConfidence(self):
+        return "Certain"
 
-        public String getConfidence() {
-            return "Certain";
-        }
+    def getIssueBackground(self):
+        return None
 
-        public String getIssueBackground() {
-            return null;
-        }
+    def getRemediationBackground(self):
+        return None
 
-        public String getRemediationBackground() {
-            return null;
-        }
+    def getIssueDetail(self):
+        return self._detail
 
-        public String getIssueDetail() {
-            return detail;
-        }
+    def getRemediationDetail(self):
+        return None
 
-        public String getRemediationDetail() {
-            return null;
-        }
+    def getHttpMessages(self):
+        return self._httpMessages
 
-        public IHttpRequest
+    def getHttpService(self):
+        return self._httpService
